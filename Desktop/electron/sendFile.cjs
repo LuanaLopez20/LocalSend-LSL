@@ -27,7 +27,7 @@ function enviarArchivo(filePath) {
 
     stream.on("end", () => {
       ws.close();
-
+      
       console.log("Archivo enviado");
     });
   });

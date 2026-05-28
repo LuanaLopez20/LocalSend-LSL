@@ -6,44 +6,76 @@ const os = require("os");
 const wss = new WebSocket.Server({ port: 4000 });
 
 wss.on("connection", (ws) => {
-  console.log("Cliente conectado");
+  console.log("✅ Cliente conectado");
 
   let writeStream = null;
 
-  // 🔥 FIX: carpeta correcta según tu Linux (etec usa "Descargas")
-  const downloads = path.join(
-    os.homedir(),
-    process.platform === "win32" ? "Downloads" : "Descargas",
-  );
+  const downloadsPath = path.join(os.homedir(), "Descargas");
 
-  // 🔥 crear carpeta si no existe
-  if (!fs.existsSync(downloads)) {
-    fs.mkdirSync(downloads, { recursive: true });
+  console.log("📁 Carpeta descargas:", downloadsPath);
+
+  if (!fs.existsSync(downloadsPath)) {
+    fs.mkdirSync(downloadsPath, { recursive: true });
   }
 
   ws.on("message", (data, isBinary) => {
-    // metadata (nombre del archivo)
+    // mensaje texto
     if (!isBinary) {
-      const meta = JSON.parse(data.toString());
+      const text = data.toString();
 
-      const filePath = path.join(downloads, meta.name);
+      // fin transferencia
+      if (text === "__END__") {
+        console.log("🏁 FIN ARCHIVO");
 
-      console.log("📥 Guardando en:", filePath);
+        if (writeStream) {
+          writeStream.end(() => {
+            console.log("✅ Archivo guardado correctamente");
+          });
+        }
 
-      writeStream = fs.createWriteStream(filePath);
-      return;
+        return;
+      }
+
+      // metadata
+      try {
+        const meta = JSON.parse(text);
+
+        console.log("📄 Metadata:", meta);
+
+        const filePath = path.join(downloadsPath, meta.name);
+
+        console.log("💾 Guardando archivo en:", filePath);
+
+        writeStream = fs.createWriteStream(filePath);
+
+        writeStream.on("error", (err) => {
+          console.log("❌ ERROR WRITE STREAM:", err);
+        });
+
+        return;
+      } catch (err) {
+        console.log("❌ ERROR JSON:", err);
+        return;
+      }
     }
 
-    // chunks del archivo
+    // chunks binarios
     if (writeStream) {
+      console.log("📦 Chunk recibido:", data.length);
+
       writeStream.write(data);
+    } else {
+      console.log("❌ No existe writeStream");
     }
   });
 
   ws.on("close", () => {
-    if (writeStream) writeStream.end();
-    console.log("✔ Transferencia terminada");
+    console.log("🔌 WS cerrado");
+  });
+
+  ws.on("error", (err) => {
+    console.log("❌ ERROR WS:", err);
   });
 });
 
-console.log("WS server activo puerto 4000");
+console.log("🚀 WS server activo puerto 4000");
