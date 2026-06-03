@@ -1,98 +1,222 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+} from "react-native";
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+import useDiscovery from "./hooks/useDiscovery";
 
 export default function HomeScreen() {
+  const devices = useDiscovery();
+
+  const [ip, setIp] = useState("");
+  const [status, setStatus] = useState("Desconectado");
+  const [fileName, setFileName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<any>(null);
+  const [ws, setWs] = useState<WebSocket | null>(null);
+
+  function conectarAuto(ip: string) {
+    const socket = new WebSocket(`ws://${ip}:4000`);
+
+    socket.onopen = () => {
+      console.log("✅ Conectado");
+      setStatus("Conectado");
+    };
+
+    socket.onerror = () => {
+      console.log("❌ Error");
+      setStatus("Error");
+    };
+
+    socket.onclose = () => {
+      console.log("🔌 Desconectado");
+      setStatus("Desconectado");
+    };
+
+    setWs(socket);
+    setIp(ip);
+  }
+
+  async function seleccionarArchivo() {
+    const result = await DocumentPicker.getDocumentAsync({
+      multiple: false,
+    });
+
+    if (result.canceled) return;
+
+    const file = result.assets[0];
+
+    setSelectedFile(file);
+    setFileName(file.name);
+
+    console.log("📄 Archivo:", file);
+  }
+
+  async function enviarArchivo() {
+    if (!ws) {
+      alert("Conectate primero");
+      return;
+    }
+
+    if (!selectedFile) {
+      alert("Seleccioná un archivo");
+      return;
+    }
+
+    try {
+      const base64 = await FileSystem.readAsStringAsync(
+        selectedFile.uri,
+        { encoding: "base64" as any }
+      );
+
+      ws.send(
+        JSON.stringify({
+          type: "start",
+          name: selectedFile.name,
+          size: selectedFile.size,
+        })
+      );
+
+      ws.send(base64);
+
+      ws.send("__END__");
+
+      console.log("✅ Archivo enviado");
+    } catch (err) {
+      console.log("❌ Error enviando:", err);
+    }
+  }
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <View style={styles.container}>
+      <Text style={styles.title}>LocalSend Mobile</Text>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+      {/* 🔍 DEVICES DISCOVERY */}
+      <Text style={{ color: "white", marginBottom: 10 }}>
+        Dispositivos encontrados:
+      </Text>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+      {devices.map((d) => (
+        <TouchableOpacity
+          key={d.ip}
+          style={styles.device}
+          onPress={() => conectarAuto(d.ip)}
+        >
+          <Text style={{ color: "white" }}>🖥 {d.name}</Text>
+          <Text style={{ color: "gray" }}>{d.ip}</Text>
+        </TouchableOpacity>
+      ))}
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+      {/* IP MANUAL (opcional) */}
+      <TextInput
+        placeholder="IP de la PC (opcional)"
+        placeholderTextColor="#777"
+        value={ip}
+        onChangeText={setIp}
+        style={styles.input}
+      />
+
+      <TouchableOpacity
+        style={styles.button}
+        onPress={() => conectarAuto(ip)}
+      >
+        <Text style={styles.buttonText}>Conectar manual</Text>
+      </TouchableOpacity>
+
+      {/* ARCHIVOS */}
+      <TouchableOpacity
+        style={styles.button}
+        onPress={seleccionarArchivo}
+      >
+        <Text style={styles.buttonText}>
+          Seleccionar archivo
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.button}
+        onPress={enviarArchivo}
+      >
+        <Text style={styles.buttonText}>
+          Enviar archivo
+        </Text>
+      </TouchableOpacity>
+
+      {fileName !== "" && (
+        <Text style={styles.file}>📄 {fileName}</Text>
+      )}
+
+      <Text style={styles.status}>
+        Estado: {status}
+      </Text>
+    </View>
   );
 }
+
+/* ================= STYLES ================= */
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    backgroundColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
+
   title: {
-    textAlign: 'center',
+    color: "white",
+    fontSize: 30,
+    fontWeight: "bold",
+    marginBottom: 20,
   },
-  code: {
-    textTransform: 'uppercase',
+
+  input: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#444",
+    borderRadius: 10,
+    padding: 12,
+    color: "white",
+    marginTop: 20,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+
+  button: {
+    backgroundColor: "#00aa55",
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+
+  buttonText: {
+    color: "white",
+    fontWeight: "bold",
+  },
+
+  file: {
+    color: "lime",
+    marginTop: 20,
+    fontSize: 16,
+  },
+
+  status: {
+    color: "white",
+    marginTop: 20,
+    fontSize: 18,
+  },
+
+  device: {
+    backgroundColor: "#222",
+    padding: 10,
+    marginBottom: 10,
+    borderRadius: 10,
+    width: "100%",
   },
 });

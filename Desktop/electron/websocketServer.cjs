@@ -9,6 +9,7 @@ wss.on("connection", (ws) => {
   console.log("✅ Cliente conectado");
 
   let writeStream = null;
+  let waitingFileData = false;
 
   const downloadsPath = path.join(os.homedir(), "Descargas");
 
@@ -19,11 +20,9 @@ wss.on("connection", (ws) => {
   }
 
   ws.on("message", (data, isBinary) => {
-    // mensaje texto
     if (!isBinary) {
       const text = data.toString();
 
-      // fin transferencia
       if (text === "__END__") {
         console.log("🏁 FIN ARCHIVO");
 
@@ -33,10 +32,20 @@ wss.on("connection", (ws) => {
           });
         }
 
+        waitingFileData = false;
         return;
       }
 
-      // metadata
+      if (waitingFileData) {
+        const buffer = Buffer.from(text, "base64");
+
+        console.log("📦 Base64 recibido:", buffer.length);
+
+        writeStream.write(buffer);
+
+        return;
+      }
+
       try {
         const meta = JSON.parse(text);
 
@@ -47,6 +56,8 @@ wss.on("connection", (ws) => {
         console.log("💾 Guardando archivo en:", filePath);
 
         writeStream = fs.createWriteStream(filePath);
+
+        waitingFileData = true;
 
         writeStream.on("error", (err) => {
           console.log("❌ ERROR WRITE STREAM:", err);
@@ -59,7 +70,6 @@ wss.on("connection", (ws) => {
       }
     }
 
-    // chunks binarios
     if (writeStream) {
       console.log("📦 Chunk recibido:", data.length);
 
