@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "electron": "electron electron/main.cjs"
+    "electron": "electron electron/main.js"
   },
   "dependencies": {
     "electron-store": "^11.0.2",

@@ -1,77 +1,62 @@
+import { app, BrowserWindow } from "electron";
+import path from "path";
+import { fileURLToPath } from "url";
 import dgram from "dgram";
-import { serve } from "bun";
 import os from "os";
-import fs from "fs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const WS_PORT = 4000;
 const UDP_PORT = 41234;
 
-/* ================== UDP DISCOVERY ================== */
+let mainWindow = null;
 
-const udp = dgram.createSocket("udp4");
+function createWindow() {
+  console.log("Creando ventana...");
 
-udp.bind(UDP_PORT, () => {
-  udp.setBroadcast(true);
-  console.log("UDP discovery activo");
-});
-
-udp.on("message", (msg, rinfo) => {
-  if (msg.toString() === "DISCOVER_LOCALSEND") {
-    const response = JSON.stringify({
-      type: "server",
-      name: "DESKTOP-KAREN",
-      ip: getIP(),
-      port: WS_PORT
-    });
-
-    udp.send(response, rinfo.port, rinfo.address);
-  }
-});
-
-/* ================== WS SERVER ================== */
-
-let writeStream = null;
-
-serve({
-  port: WS_PORT,
-
-  fetch(req, server) {
-    if (server.upgrade(req)) return;
-    return new Response("WS only");
-  },
-
-  websocket: {
-    open() {
-      console.log("WS conectado");
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
     },
+  });
 
-    message(ws, msg) {
-      const data = JSON.parse(msg);
+  mainWindow.loadURL("http://localhost:5173");
+}
 
-      if (data.type === "start") {
-        writeStream = fs.createWriteStream(
-          `./descargas/${data.fileName}`
-        );
-        console.log("Recibiendo:", data.fileName);
-      }
+app.whenReady().then(() => {
+  console.log("APP READY");
 
-      if (data.type === "chunk") {
-        writeStream.write(Buffer.from(data.data));
-      }
+  createWindow();
 
-      if (data.type === "end") {
-        writeStream.end();
-        console.log("Archivo completo");
-      }
+  const udp = dgram.createSocket("udp4");
+
+  udp.bind(UDP_PORT, () => {
+    udp.setBroadcast(true);
+    console.log("UDP discovery activo");
+  });
+
+  udp.on("message", (msg, rinfo) => {
+    if (msg.toString() === "DISCOVER_LOCALSEND") {
+      const response = JSON.stringify({
+        type: "server",
+        name: "DESKTOP-KAREN",
+        ip: getIP(),
+        port: WS_PORT,
+      });
+
+      udp.send(response, rinfo.port, rinfo.address);
     }
-  }
+  });
 });
 
 function getIP() {
   const nets = os.networkInterfaces();
 
   for (const name in nets) {
-    for (const net of nets[name]) {
+    for (const net of nets[name] || []) {
       if (net.family === "IPv4" && !net.internal) {
         return net.address;
       }

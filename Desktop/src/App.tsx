@@ -46,7 +46,7 @@ export default function App() {
     if (!file) return;
 
     if (!selectedDevice) {
-      console.log("❌ Seleccioná un dispositivo");
+      console.log("Seleccioná un dispositivo");
       return;
     }
 
