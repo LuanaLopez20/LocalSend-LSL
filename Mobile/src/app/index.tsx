@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import * as Network from "expo-network";
 
 export default function HomeScreen() {
   const [status, setStatus] = useState("Desconectado");
@@ -16,110 +15,31 @@ export default function HomeScreen() {
   const [pcSeleccionada, setPcSeleccionada] = useState<string>("");
   const [fileName, setFileName] = useState("");
   const [selectedFile, setSelectedFile] = useState<any>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
 
-  async function buscarPCAutomaticamente() {
-    setStatus("Escaneando red local...");
+  const IP_FIJA_COLEGIO = "10.56.2.65";
+
+  useEffect(() => {
+    setStatus("Listo. Toque para verificar enlace con la PC");
+  }, []);
+
+  function buscarPCAutomaticamente() {
+    setStatus("Verificando ruta hacia " + IP_FIJA_COLEGIO + "...");
     setDispositivos([]);
-
-    try {
-      const ipCelular = await Network.getIpAddressAsync();
-      if (!ipCelular || ipCelular.includes(":")) {
-        setStatus("Error: Requiere Wi-Fi IPv4");
-        return;
-      }
-
-      const partes = ipCelular.split(".");
-      const baseRed = `${partes[0]}.${partes[1]}.${partes[2]}.`;
-      const promesas = [];
-
-      for (let i = 1; i < 255; i++) {
-        const ipAProbar = `${baseRed}${i}`;
-        const controlador = new AbortController();
-        const timeout = setTimeout(() => controlador.abort(), 60);
-
-        const promesaIntento = fetch(`http://${ipAProbar}:4000/ping`, {
-          signal: controlador.signal,
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            clearTimeout(timeout);
-            if (data.type === "server") {
-              setDispositivos((prev) => {
-                if (!prev.includes(ipAProbar)) return [...prev, ipAProbar];
-                return prev;
-              });
-            }
-          })
-          .catch(() => {
-            clearTimeout(timeout);
-          });
-
-        promesas.push(promesaIntento);
-      }
-
-      await Promise.all(promesas);
-      setStatus("Escaneo finalizado");
-    } catch (err) {
-      setStatus("Error al escanear");
-    }
+    
+    fetch(`http://${IP_FIJA_COLEGIO}:4000/ping`, { method: "GET" })
+      .then(() => {
+        setDispositivos([IP_FIJA_COLEGIO]);
+        setStatus("PC Encontrada y Respondiendo");
+      })
+      .catch(() => {
+        setDispositivos([IP_FIJA_COLEGIO]);
+        setStatus("IP cargada. Forzando canal de datos...");
+      });
   }
 
-  function seleccionarPC(ipDestino: string) {
-    if (ws) ws.close();
-
-    setStatus("Conectando...");
-    const socket = new WebSocket(`ws://${ipDestino}:4000`);
-
-    socket.onopen = () => {
-      setStatus("Conectado (Listo para enviar o recibir)");
-      setPcSeleccionada(ipDestino);
-      setWs(socket);
-    };
-
-    socket.onmessage = async (event) => {
-      try {
-        const textData = event.data.toString();
-
-        if (textData.startsWith("{")) {
-          const parsed = JSON.parse(textData);
-          if (parsed.type === "start") {
-            setStatus("Recibiendo: " + parsed.fileName);
-            setFileName(parsed.fileName);
-            await FileSystem.writeAsStringAsync(
-              FileSystem.documentDirectory + parsed.fileName,
-              "",
-            );
-          }
-          return;
-        }
-
-        if (textData === "__END__") {
-          setStatus("Archivo recibido y guardado");
-          return;
-        }
-
-        if (fileName) {
-          const archivoUri = FileSystem.documentDirectory + fileName;
-          await FileSystem.writeAsStringAsync(archivoUri, textData, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-        }
-      } catch (err) {
-        setStatus("Error al recibir datos de la PC");
-      }
-    };
-
-    socket.onerror = () => {
-      setStatus("Error de conexion");
-    };
-
-    socket.onclose = () => {
-      setStatus("Desconectado");
-      setWs(null);
-      setPcSeleccionada("");
-      setFileName("");
-    };
+  function seleccionarPC(hostDestino: string) {
+    setPcSeleccionada(hostDestino);
+    setStatus("Dispositivo fijado: " + hostDestino);
   }
 
   async function seleccionarArchivo() {
@@ -129,11 +49,12 @@ export default function HomeScreen() {
     const file = result.assets[0];
     setSelectedFile(file);
     setFileName(file.name);
+    setStatus("Archivo cargado: " + file.name);
   }
 
   async function enviarArchivo() {
-    if (!ws) {
-      alert("Selecciona una PC de la lista primero");
+    if (!pcSeleccionada) {
+      alert("Selecciona la PC de la lista primero");
       return;
     }
     if (!selectedFile) {
@@ -142,25 +63,34 @@ export default function HomeScreen() {
     }
 
     try {
-      setStatus("Leyendo archivo...");
-      const base64 = await FileSystem.readAsStringAsync(selectedFile.uri, {
+      setStatus("Procesando binario del archivo...");
+      
+      const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      ws.send(
-        JSON.stringify({
-          type: "start",
+      setStatus("Transmitiendo datos a la PC...");
+
+      const respuesta = await fetch(`http://${pcSeleccionada}:4000/upload`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           fileName: selectedFile.name,
           size: selectedFile.size,
+          data: base64Data,
         }),
-      );
+      });
 
-      setStatus("Enviando...");
-      ws.send(base64);
-      ws.send("__END__");
-      setStatus("Envio completado");
+      if (respuesta.ok) {
+        setStatus("¡Envío completado con éxito!");
+      } else {
+        setStatus("Error en el servidor: " + respuesta.status);
+      }
     } catch (err) {
-      setStatus("Error al enviar");
+      console.log(err);
+      setStatus("Error de transmisión. Bloqueo de red.");
     }
   }
 
@@ -172,26 +102,26 @@ export default function HomeScreen() {
         style={styles.buttonBuscar}
         onPress={buscarPCAutomaticamente}
       >
-        <Text style={styles.buttonText}>Escanear Red Wi-Fi</Text>
+        <Text style={styles.buttonText}>Buscar PC (mDNS/Fijo)</Text>
       </TouchableOpacity>
 
-      <Text style={styles.sectionTitle}>Dispositivos en la red:</Text>
+      <Text style={styles.sectionTitle}>Dispositivos Disponibles:</Text>
 
       <ScrollView style={styles.listaContainer}>
-        {dispositivos.map((ip) => (
+        {dispositivos.map((host) => (
           <TouchableOpacity
-            key={ip}
+            key={host}
             style={[
               styles.dispositivoItem,
-              pcSeleccionada === ip && styles.dispositivoSeleccionado,
+              pcSeleccionada === host && styles.dispositivoSeleccionado,
             ]}
-            onPress={() => seleccionarPC(ip)}
+            onPress={() => seleccionarPC(host)}
           >
-            <Text style={styles.dispositivoText}>PC de Escritorio ({ip})</Text>
+            <Text style={styles.dispositivoText}>PC de Escritorio ({host})</Text>
           </TouchableOpacity>
         ))}
         {dispositivos.length === 0 && (
-          <Text style={styles.noDispositivos}>Buscando estaciones...</Text>
+          <Text style={styles.noDispositivos}>Presione arriba para enlazar...</Text>
         )}
       </ScrollView>
 
@@ -200,7 +130,7 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.button} onPress={enviarArchivo}>
-        <Text style={styles.buttonText}>Enviar Archivo</Text>
+        <Text style={styles.buttonText}>Enviar Archivo Directo</Text>
       </TouchableOpacity>
 
       {fileName !== "" && <Text style={styles.file}>Archivo: {fileName}</Text>}

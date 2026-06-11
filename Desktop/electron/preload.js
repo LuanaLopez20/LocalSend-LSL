@@ -2,9 +2,14 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   onDeviceFound: (callback) => {
-    ipcRenderer.on("device-found", (_, device) => callback(device));
+    ipcRenderer.on("dispositivo-encontrado", (event, device) =>
+      callback(device),
+    );
   },
   onUploadProgress: (callback) => {
-    ipcRenderer.on("upload-progress", (_, data) => callback(data));
+    ipcRenderer.on("progreso-carga", (event, data) => callback(data));
+  },
+  sendFile: (file, device) => {
+    ipcRenderer.send("enviar-archivo", { file, device });
   },
 });
