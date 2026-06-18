@@ -1,13 +1,9 @@
 import { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-} from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system/legacy"; 
+import * as Sharing from "expo-sharing"; 
+import * as Network from "expo-network";
 
 export default function HomeScreen() {
   const [status, setStatus] = useState("Desconectado");
@@ -16,30 +12,75 @@ export default function HomeScreen() {
   const [fileName, setFileName] = useState("");
   const [selectedFile, setSelectedFile] = useState<any>(null);
 
-  const IP_FIJA_COLEGIO = "10.56.2.65";
+  // IP de la PC de la escuela (Confirmada por ifconfig)
+  const IP_PC_COLEGIO = "10.56.2.18"; 
+  
+  // CORREGIDO: La IP real de Karen que encontramos recién
+  const IP_KAREN_CELU = "10.56.5.124";
 
   useEffect(() => {
-    setStatus("Listo. Toque para verificar enlace con la PC");
+    setStatus("Listo para enviar y recibir");
   }, []);
 
   function buscarPCAutomaticamente() {
-    setStatus("Verificando ruta hacia " + IP_FIJA_COLEGIO + "...");
-    setDispositivos([]);
-    
-    fetch(`http://${IP_FIJA_COLEGIO}:4000/ping`, { method: "GET" })
-      .then(() => {
-        setDispositivos([IP_FIJA_COLEGIO]);
-        setStatus("PC Encontrada y Respondiendo");
-      })
-      .catch(() => {
-        setDispositivos([IP_FIJA_COLEGIO]);
-        setStatus("IP cargada. Forzando canal de datos...");
-      });
+    setStatus("Conectando con la PC...");
+    setDispositivos([IP_PC_COLEGIO]);
+    setPcSeleccionada(IP_PC_COLEGIO);
+    setStatus("Enlazado con la PC: " + IP_PC_COLEGIO);
   }
 
   function seleccionarPC(hostDestino: string) {
     setPcSeleccionada(hostDestino);
-    setStatus("Dispositivo fijado: " + hostDestino);
+    setStatus("Enlazado con la PC: " + hostDestino);
+  }
+
+  async function descargarArchivoDePC() {
+    try {
+      setStatus("Verificando identidad...");
+      
+      // Obtenemos la IP que el router le dio al celu en este instante
+      const infoRed = await Network.getIpAddressAsync();
+      
+      console.log("IP detectada en el celular:", infoRed);
+
+      // Verificación estricta: si no es la IP de Karen, rebota
+      if (infoRed !== IP_KAREN_CELU) {
+        setStatus("Acceso denegado.");
+        Alert.alert(
+          "Dispositivo no autorizado", 
+          `Tu IP (${infoRed}) no coincide con la IP autorizada de Karen (${IP_KAREN_CELU}).`
+        );
+        return; 
+      }
+
+      const ipAUsar = pcSeleccionada || IP_PC_COLEGIO;
+      setStatus("Descargando archivo de la PC...");
+      const urlDescarga = `http://${ipAUsar}:4000/descargar`;
+      const rutaDestinoCelu = FileSystem.documentDirectory + "archivo_recibido.pdf";
+
+      setStatus("Transfiriendo datos...");
+      const resultado = await FileSystem.downloadAsync(urlDescarga, rutaDestinoCelu);
+
+      if (resultado.status === 200) {
+        setStatus("¡Archivo recibido con éxito!");
+        
+        const puedeCompartir = await Sharing.isAvailableAsync();
+        if (puedeCompartir) {
+          await Sharing.shareAsync(rutaDestinoCelu);
+        } else {
+          Alert.alert("¡Éxito total!", "El archivo se descargó correctamente en el celular.");
+        }
+      } else if (resultado.status === 404) {
+        setStatus("La PC no tiene archivos listos.");
+        alert("Asegurate de haber cargado el archivo y tocado 'Enviar' en la compu primero.");
+      } else {
+        setStatus("Error de la PC: " + resultado.status);
+      }
+    } catch (err) {
+      console.log(err);
+      setStatus("Error de conexión o validación.");
+      alert("Error al intentar conectar. Revisá que la PC tenga el proceso abierto.");
+    }
   }
 
   async function seleccionarArchivo() {
@@ -53,148 +94,87 @@ export default function HomeScreen() {
   }
 
   async function enviarArchivo() {
-    if (!pcSeleccionada) {
-      alert("Selecciona la PC de la lista primero");
-      return;
-    }
+    const ipAUsar = pcSeleccionada || IP_PC_COLEGIO;
     if (!selectedFile) {
       alert("Selecciona un archivo primero");
       return;
     }
 
     try {
-      setStatus("Procesando binario del archivo...");
-      
-      const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      setStatus("Transmitiendo a la PC...");
+      const formData = new FormData();
+      formData.append("file", {
+        uri: selectedFile.uri,
+        name: selectedFile.name,
+        type: selectedFile.mimeType || "application/octet-stream",
+      } as any);
 
-      setStatus("Transmitiendo datos a la PC...");
-
-      const respuesta = await fetch(`http://${pcSeleccionada}:4000/upload`, {
+      const respuesta = await fetch(`http://${ipAUsar}:4000/upload`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fileName: selectedFile.name,
-          size: selectedFile.size,
-          data: base64Data,
-        }),
+        body: formData,
+        headers: { "x-file-name": encodeURIComponent(selectedFile.name) }
       });
 
       if (respuesta.ok) {
-        setStatus("¡Envío completado con éxito!");
+        setStatus("¡Enviado a la PC con éxito!");
       } else {
-        setStatus("Error en el servidor: " + respuesta.status);
+        setStatus("Error: " + respuesta.status);
       }
     } catch (err) {
-      console.log(err);
-      setStatus("Error de transmisión. Bloqueo de red.");
+      setStatus("Error de red.");
     }
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>LocalSend Mobile</Text>
+      <Text style={styles.title}>LocalSend Pro</Text>
 
-      <TouchableOpacity
-        style={styles.buttonBuscar}
-        onPress={buscarPCAutomaticamente}
-      >
-        <Text style={styles.buttonText}>Buscar PC (mDNS/Fijo)</Text>
+      <TouchableOpacity style={styles.buttonBuscar} onPress={buscarPCAutomaticamente}>
+        <Text style={styles.buttonText}>1. Buscar Computadora</Text>
       </TouchableOpacity>
-
-      <Text style={styles.sectionTitle}>Dispositivos Disponibles:</Text>
 
       <ScrollView style={styles.listaContainer}>
         {dispositivos.map((host) => (
           <TouchableOpacity
             key={host}
-            style={[
-              styles.dispositivoItem,
-              pcSeleccionada === host && styles.dispositivoSeleccionado,
-            ]}
+            style={[styles.dispositivoItem, pcSeleccionada === host && styles.dispositivoSeleccionado]}
             onPress={() => seleccionarPC(host)}
           >
-            <Text style={styles.dispositivoText}>PC de Escritorio ({host})</Text>
+            <Text style={styles.dispositivoText}>PC de Luana/Karen ({host})</Text>
           </TouchableOpacity>
         ))}
-        {dispositivos.length === 0 && (
-          <Text style={styles.noDispositivos}>Presione arriba para enlazar...</Text>
-        )}
       </ScrollView>
 
+      <TouchableOpacity style={styles.buttonRecibir} onPress={descargarArchivoDePC}>
+        <Text style={styles.buttonText}>➔ TRAER ARCHIVO DE LA PC</Text>
+      </TouchableOpacity>
+
+      <View style={{ height: 20 }} />
+
       <TouchableOpacity style={styles.button} onPress={seleccionarArchivo}>
-        <Text style={styles.buttonText}>Seleccionar Archivo</Text>
+        <Text style={styles.buttonText}>Seleccionar Archivo (Para enviar)</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.button} onPress={enviarArchivo}>
-        <Text style={styles.buttonText}>Enviar Archivo Directo</Text>
+        <Text style={styles.buttonText}>Enviar a PC ➔</Text>
       </TouchableOpacity>
 
-      {fileName !== "" && <Text style={styles.file}>Archivo: {fileName}</Text>}
+      {fileName !== "" && <Text style={styles.file}>Archivo a enviar: {fileName}</Text>}
       <Text style={styles.status}>Estado: {status}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#111",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-    paddingTop: 60,
-  },
+  container: { flex: 1, backgroundColor: "#111", justifyContent: "center", alignItems: "center", padding: 20, paddingTop: 60 },
   title: { color: "white", fontSize: 30, fontWeight: "bold", marginBottom: 20 },
-  sectionTitle: {
-    color: "#aaa",
-    fontSize: 16,
-    alignSelf: "flex-start",
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  listaContainer: {
-    width: "100%",
-    maxHeight: 150,
-    backgroundColor: "#1a1a1a",
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 20,
-  },
-  dispositivoItem: {
-    backgroundColor: "#222",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#333",
-  },
-  dispositivoSeleccionado: {
-    borderColor: "#00ffcc",
-    backgroundColor: "#11332c",
-  },
+  listaContainer: { width: "100%", maxHeight: 80, backgroundColor: "#1a1a1a", borderRadius: 10, padding: 10, marginBottom: 20 },
+  dispositivoItem: { backgroundColor: "#222", padding: 12, borderRadius: 8, marginBottom: 8 },
+  dispositivoSeleccionado: { borderColor: "#00ffcc", borderWidth: 1, backgroundColor: "#11332c" },
   dispositivoText: { color: "white", fontWeight: "600" },
-  noDispositivos: { color: "#666", textAlign: "center", marginTop: 10 },
-  buttonBuscar: {
-    backgroundColor: "#0077ff",
-    paddingHorizontal: 30,
-    paddingVertical: 14,
-    borderRadius: 10,
-    width: "100%",
-    alignItems: "center",
-  },
-  button: {
-    backgroundColor: "#00aa55",
-    paddingHorizontal: 30,
-    paddingVertical: 12,
-    borderRadius: 10,
-    marginTop: 10,
-    width: "100%",
-    alignItems: "center",
-  },
+  buttonBuscar: { backgroundColor: "#0077ff", paddingHorizontal: 30, paddingVertical: 14, borderRadius: 10, width: "100%", alignItems: "center" },
+  buttonRecibir: { backgroundColor: "#8b5a2b", paddingHorizontal: 30, paddingVertical: 14, borderRadius: 10, width: "100%", alignItems: "center", marginTop: 5 },
+  button: { backgroundColor: "#00aa55", paddingHorizontal: 30, paddingVertical: 12, borderRadius: 10, marginTop: 10, width: "100%", alignItems: "center" },
   buttonText: { color: "white", fontWeight: "bold" },
   file: { color: "#00ffcc", marginTop: 20, fontSize: 16 },
   status: { color: "white", marginTop: 20, fontSize: 18 },

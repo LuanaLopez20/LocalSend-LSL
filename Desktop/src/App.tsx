@@ -12,6 +12,7 @@ declare global {
 
 export default function App() {
   const [fileName, setFileName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [devices, setDevices] = useState<any[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<any>(null);
   const [progress, setProgress] = useState(0);
@@ -20,24 +21,24 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ADAPTADO: Pide la lista de dispositivos reales detectados al backend de Node cada 3 segundos
   useEffect(() => {
-    if (window.electronAPI && window.electronAPI.onDeviceFound) {
-      window.electronAPI.onDeviceFound((device: any) => {
-        setDevices((prev) => {
-          const exists = prev.find((d) => d.ip === device.ip);
-          if (exists) return prev;
-          return [...prev, device];
-        });
-      });
+    async function actualizarDispositivos() {
+      try {
+        const res = await fetch("http://localhost:4000/dispositivos");
+        if (res.ok) {
+          const datos = await res.json();
+          setDevices(datos);
+        }
+      } catch (err) {
+        console.log("Esperando respuesta del servidor en el puerto 4000...");
+      }
     }
 
-    if (window.electronAPI && window.electronAPI.onUploadProgress) {
-      window.electronAPI.onUploadProgress((data: any) => {
-        setProgress(data.progress);
-        setSpeed(data.speed);
-        setEta(data.eta);
-      });
-    }
+    actualizarDispositivos();
+    const intervalo = setInterval(actualizarDispositivos, 3000);
+
+    return () => clearInterval(intervalo);
   }, []);
 
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
@@ -49,7 +50,7 @@ export default function App() {
     try {
       const file = e.dataTransfer.files?.[0];
       if (!file) return;
-      procesarArchivo(file);
+      prepararArchivo(file);
     } catch (err) {
       console.log("Error en drag and drop, use el boton alternativo");
     }
@@ -58,17 +59,53 @@ export default function App() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    procesarArchivo(file);
+    prepararArchivo(file);
   }
 
-  function procesarArchivo(file: File) {
+  function prepararArchivo(file: File) {
+    setSelectedFile(file);
+    setFileName(file.name);
+  }
+
+  // ADAPTADO: Ahora sube el archivo binario real por HTTP al puerto 4000
+  async function presionarEnviar() {
     if (!selectedDevice) {
-      alert("Seleccioná un dispositivo primero");
+      alert("Seleccioná un dispositivo de la lista primero");
       return;
     }
-    setFileName(file.name);
-    if (window.electronAPI && window.electronAPI.sendFile) {
-      window.electronAPI.sendFile(file, selectedDevice);
+    if (!selectedFile) {
+      alert("Cargá un archivo primero arrastrándolo o con el botón");
+      return;
+    }
+
+    try {
+      setProgress(10);
+      setSpeed(5);
+      setEta(2);
+
+      // Mandamos el cuerpo del archivo por HTTP Post sin usar IPC de Electron
+      const respuesta = await fetch("http://localhost:4000/preparar-archivo", {
+        method: "POST",
+        body: selectedFile, 
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "x-file-name": encodeURIComponent(selectedFile.name)
+        }
+      });
+
+      if (respuesta.ok) {
+        setProgress(100);
+        setSpeed(0);
+        setEta(0);
+        alert("¡Archivo listo en el servidor! Ya podés tocar 'TRAER ARCHIVO' en el celu.");
+      } else {
+        alert("Error al subir el archivo al servidor local.");
+        setProgress(0);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error de conexión con el backend de la PC.");
+      setProgress(0);
     }
   }
 
@@ -124,8 +161,28 @@ export default function App() {
           O Seleccionar Archivo
         </button>
 
-        {fileName && <div style={{ color: "lime" }}>Archivo: {fileName}</div>}
+        {fileName && <div style={{ color: "cyan" }}>Archivo cargado: {fileName}</div>}
       </div>
+
+      <button
+        onClick={presionarEnviar}
+        disabled={!selectedDevice || !selectedFile}
+        style={{
+          width: "400px",
+          padding: "14px",
+          marginTop: "15px",
+          background: (!selectedDevice || !selectedFile) ? "#333" : "#00aa55",
+          color: (!selectedDevice || !selectedFile) ? "#666" : "white",
+          border: "none",
+          borderRadius: "8px",
+          fontSize: "16px",
+          fontWeight: "bold",
+          cursor: (!selectedDevice || !selectedFile) ? "not-allowed" : "pointer",
+          transition: "0.2s"
+        }}
+      >
+        Enviar Archivo ➔
+      </button>
 
       {progress > 0 && (
         <div style={{ width: "400px", marginTop: "20px" }}>
