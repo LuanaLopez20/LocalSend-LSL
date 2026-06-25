@@ -1,98 +1,15 @@
 :root {
-  --bg: #030703;
-  --text: #70a370;
-  --text-h: #33ff33;
-  --border: #164d16;
-  --code-bg: #071407;
-  --accent: #00ffff;
-  --accent-bg: rgba(0, 255, 255, 0.05);
-  --accent-border: #00cccc;
-  --amber: #ff9900;
-  --glow: 0 0 8px rgba(51, 255, 51, 0.4);
-  --glow-strong: 0 0 15px rgba(51, 255, 51, 0.7);
-  --shadow: inset 0 0 20px rgba(0, 0, 0, 0.9);
-
-  --sans: ui-monospace, 'Fira Code', 'JetBrains Mono', Consolas, monospace;
-  --heading: ui-monospace, 'Fira Code', 'JetBrains Mono', Consolas, monospace;
-  --mono: ui-monospace, 'Fira Code', 'JetBrains Mono', Consolas, monospace;
-
-  font: 16px/145% var(--sans);
-  letter-spacing: 1px;
   color-scheme: dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  background-image: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-  background-size: 100% 4px, 6px 100%;
-
-  @media (max-width: 1024px) {
-    font-size: 14px;
-  }
-}
-
-body {
-  margin: 0;
-  background-color: var(--bg);
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: left;
-  border-inline: 1px dashed var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  padding: 20px;
+  width: 100%;
+  min-height: 100vh;
+  background-color: #0b0b0b;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 700;
-  color: var(--text-h);
-  text-transform: uppercase;
-  text-shadow: var(--glow);
-}
-
-h1 {
-  font-size: 38px;
-  letter-spacing: 2px;
-  margin: 24px 0;
-}
-
-h1::before {
-  content: "> ";
-}
-
-h2 {
-  font-size: 20px;
-  line-height: 118%;
-  margin: 0 0 12px;
-}
-
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 0px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 14px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
-  border: 1px solid var(--border);
+h1, h2, h3, p, span, button, label, div {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  text-shadow: none !important;
+  text-transform: none !important;
 }

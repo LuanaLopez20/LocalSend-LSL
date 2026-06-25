@@ -39,6 +39,7 @@
     "typescript": "~5.9.2"
   },
   "scripts": {
+    "electron": "electron -r tsx electron/main.ts",
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",

@@ -16,53 +16,54 @@ const bonjour = new Bonjour();
 let listaDispositivos = []; 
 let archivoParaCompartir = null;
 
-// =================================================================
-// SCONEXIÓN DINÁMICA CON BONJOUR (mDNS)
-// =================================================================
+const DATA_DIR = path.join(os.homedir(), ".localsend_pro");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// 1. PUBLICAR la PC para que los celulares la vean al escanear la red
+const GUARDADOS_PATH = path.join(DATA_DIR, "guardados.json");
+const HISTORIAL_PATH = path.join(DATA_DIR, "historial.json");
+
+const leerJson = (ruta, defecto) => {
+  try { return fs.existsSync(ruta) ? JSON.parse(fs.readFileSync(ruta, "utf-8")) : defecto; }
+  catch (e) { return defecto; }
+};
+const escribirJson = (ruta, datos) => fs.writeFileSync(ruta, JSON.stringify(datos, null, 2), "utf-8");
+
+let ipsGuardadas = leerJson(GUARDADOS_PATH, {});
+let historialRecepcion = leerJson(HISTORIAL_PATH, []);
+
 bonjour.publish({ 
-  name: `PC-${os.hostname()}`, // Nombre único reconocible en la red
-  type: 'local-share',         // Cambiamos a un tipo personalizado para no mezclar con otros aparatos
+  name: `PC-${os.hostname()}`, 
+  type: 'localsend',         
   protocol: 'tcp',
   port: WS_PORT 
 });
 
-// 2. BUSCAR constantemente celulares y otras PCs en la misma red
-const browser = bonjour.find({ type: 'local-share', protocol: 'tcp' });
+const buscarDispositivosOficiales = () => {
+  const tipos = ['localsend', 'http'];
+  tipos.forEach(tipo => {
+    const browser = bonjour.find({ type: tipo, protocol: 'tcp' });
+    browser.on('up', (service) => {
+      const ipDetectada = service.addresses?.[0];
+      if (service.name !== `PC-${os.hostname()}` && ipDetectada) {
+        const index = listaDispositivos.findIndex(d => d.ip === ipDetectada);
+        const dispositivo = {
+          name: ipsGuardadas[ipDetectada] || (service.name.includes("PC") ? service.name : `📱 ${service.name}`),
+          ip: ipDetectada,
+          port: service.port || 53317, 
+          lastSeen: Date.now()
+        };
+        if (index !== -1) listaDispositivos[index] = dispositivo;
+        else listaDispositivos.push(dispositivo);
+      }
+    });
+  });
+};
+buscarDispositivosOficiales();
 
-browser.on('up', (service) => {
-  const ipDetectada = service.addresses[0];
-  
-  // Evitar agregarse a uno mismo
-  if (service.name !== `PC-${os.hostname()}` && ipDetectada) {
-    // Si el dispositivo ya existía (ej. cambió de IP), lo actualizamos; si no, lo agregamos
-    const index = listaDispositivos.findIndex(d => d.name === service.name);
-    const dispositivo = {
-      name: service.name,
-      ip: ipDetectada,
-      port: service.port,
-      lastSeen: Date.now()
-    };
-
-    if (index !== -1) {
-      listaDispositivos[index] = dispositivo;
-    } else {
-      listaDispositivos.push(dispositivo);
-    }
-    console.log(`[RED] Dispositivo Conectado: ${service.name} en http://${ipDetectada}:${service.port}`);
-  }
-});
-
-// 3. REMOVER de la lista si un dispositivo se apaga o se va de la red
-browser.on('down', (service) => {
-  listaDispositivos = listaDispositivos.filter(d => d.name !== service.name);
-  console.log(`[RED] Dispositivo Desconectado: ${service.name}`);
-});
-
-// =================================================================
-// SERVIDOR HTTP (Transferencia de archivos y API)
-// =================================================================
+setInterval(() => {
+  const limite = Date.now() - 15000;
+  listaDispositivos = listaDispositivos.filter(d => d.lastSeen > limite);
+}, 10000);
 
 const server = http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -70,24 +71,69 @@ const server = http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-file-name"); 
   res.setHeader("Access-Control-Expose-Headers", "x-file-name");
 
+  const responderJson = (data) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(data));
+  };
+
   if (req.method === "OPTIONS") {
     res.writeHead(200);
     res.end();
     return;
   }
 
-  // API para que el Frontend de la PC dibuje los botones de los celulares detectados
   if (req.url === "/dispositivos" && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(listaDispositivos));
+    responderJson({
+      enRed: listaDispositivos.map(d => ({ ...d, name: ipsGuardadas[d.ip] || d.name })),
+      guardados: Object.entries(ipsGuardadas).map(([ip, alias]) => ({ ip, name: alias }))
+    });
     return;
   }
 
-  // RECEPTOR: Cuando te mandan un archivo
+  if (req.url === "/guardar-alias" && req.method === "POST") {
+    let body = "";
+    req.on("data", chunk => body += chunk);
+    req.on("end", () => {
+      try {
+        const { ip, alias } = JSON.parse(body);
+        if (ip && alias) {
+          ipsGuardadas[ip] = alias;
+          escribirJson(GUARDADOS_PATH, ipsGuardadas);
+          res.writeHead(200); res.end("Alias guardado");
+        } else { res.writeHead(400); res.end("Datos invalidos"); }
+      } catch (e) { res.writeHead(400); res.end(); }
+    });
+    return;
+  }
+
+  if (req.url === "/eliminar-guardado" && req.method === "POST") {
+    let body = "";
+    req.on("data", chunk => body += chunk);
+    req.on("end", () => {
+      try {
+        const { ip } = JSON.parse(body);
+        delete ipsGuardadas[ip];
+        escribirJson(GUARDADOS_PATH, ipsGuardadas);
+        res.writeHead(200); res.end();
+      } catch (e) { res.writeHead(400); res.end(); }
+    });
+    return;
+  }
+
+  if (req.url === "/historial" && req.method === "GET") {
+    const historialConAlias = historialRecepcion.map(h => ({
+      ...h,
+      dispositivo: ipsGuardadas[h.ip] || h.dispositivo
+    }));
+    responderJson(historialConAlias);
+    return;
+  }
+
   if (req.url === "/upload" && req.method === "POST") {
     const headerName = req.headers["x-file-name"];
     const fileName = headerName ? decodeURIComponent(headerName) : "archivo_" + Date.now() + ".bin";
     const carpetaDestino = path.join(os.homedir(), "Downloads", "archivos recibidos"); 
+    const ipOrigen = req.socket.remoteAddress.replace(/^.*:/, "");
 
     if (!fs.existsSync(carpetaDestino)) fs.mkdirSync(carpetaDestino, { recursive: true });
 
@@ -96,14 +142,22 @@ const server = http.createServer((req, res) => {
     req.pipe(writeStream);
 
     req.on("end", () => {
-      shell.openPath(carpetaDestino).catch((err) => console.log(err));
+      const nuevoRegistro = {
+        archivo: fileName,
+        ip: ipOrigen,
+        dispositivo: ipsGuardadas[ipOrigen] || `📱 Celular (${ipOrigen})`,
+        fecha: new Date().toLocaleString()
+      };
+      historialRecepcion.unshift(nuevoRegistro);
+      escribirJson(HISTORIAL_PATH, historialRecepcion);
+
+      shell.openPath(carpetaDestino).catch((err) => console.error(err));
       res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("Guardado con éxito");
+      res.end("Guardado de forma exitosa");
     });
     return;
   }
 
-  // PREPARAR ARCHIVO (Desde la PC)
   if (req.url === "/preparar-archivo" && req.method === "POST") {
     const headerName = req.headers["x-file-name"];
     let datosBuffer = [];
@@ -114,22 +168,15 @@ const server = http.createServer((req, res) => {
         buffer: Buffer.concat(datosBuffer)
       };
       res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("Listo");
+      res.end("Buffer preparado");
     });
     return;
   }
 
-  // DESCARGAR (El celular se lo baja)
   if (req.url === "/descargar" && req.method === "GET") {
-    if (!archivoParaCompartir) {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-
+    if (!archivoParaCompartir) { res.writeHead(404); res.end(); return; }
     const nombreArchivo = archivoParaCompartir.nombre;
     const extension = path.extname(nombreArchivo).toLowerCase();
-    
     let contentType = "application/octet-stream"; 
     if (extension === ".jpg" || extension === ".jpeg") contentType = "image/jpeg";
     else if (extension === ".png") contentType = "image/png";
@@ -143,20 +190,19 @@ const server = http.createServer((req, res) => {
       "x-file-name": encodeURIComponent(nombreArchivo),
       "Content-Disposition": `attachment; filename="${encodeURIComponent(nombreArchivo)}"; filename*=UTF-8''${encodeURIComponent(nombreArchivo)}`
     });
-
     res.end(archivoParaCompartir.buffer);
     return;
   }
 
-  res.writeHead(404);
-  res.end();
+  res.writeHead(404); res.end();
 });
 
-server.listen(WS_PORT, "0.0.0.0", () => {
-  console.log(`Servidor de red local corriendo en puerto ${WS_PORT}`);
-});
+server.listen(WS_PORT, "0.0.0.0");
 
 app.whenReady().then(() => {
-  mainWindow = new BrowserWindow({ width: 1200, height: 800 });
-  mainWindow.loadURL("http://localhost:5173");
+  mainWindow = new BrowserWindow({ 
+    width: 1200, height: 800,
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  });
+  mainWindow.loadURL("http://localhost:5173"); 
 });
