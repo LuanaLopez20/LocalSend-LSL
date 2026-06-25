@@ -43,16 +43,6 @@ export default function HomeScreen() {
       
       console.log("IP detectada en el celular:", infoRed);
 
-      // Verificación estricta: si no es la IP de Karen, rebota
-      if (infoRed !== IP_KAREN_CELU) {
-        setStatus("Acceso denegado.");
-        Alert.alert(
-          "Dispositivo no autorizado", 
-          `Tu IP (${infoRed}) no coincide con la IP autorizada de Karen (${IP_KAREN_CELU}).`
-        );
-        return; 
-      }
-
       const ipAUsar = pcSeleccionada || IP_PC_COLEGIO;
       setStatus("Descargando archivo de la PC...");
       const urlDescarga = `http://${ipAUsar}:4000/descargar`;
